@@ -11,6 +11,8 @@ START_BYTE = 0x5A
 PARAM_TYPE_BP = 0xF2
 PACKET_ID_REALTIME = 0x28
 PACKET_ID_RESULT = 0x22
+PACKET_ID_GET_DEVICE_ID = 0x0F
+PACKET_ID_SET_DEVICE_ID = 0x0E
 
 REALTIME_TIMEOUT = 5
 
@@ -18,6 +20,95 @@ REALTIME_TIMEOUT = 5
 
 in_realtime_mode = False
 last_realtime_data = 0
+
+
+# ================= CRC & KOMUNIKASI =================
+
+def calc_crc(data_bytes):
+    """
+    Menghitung CRC16 Modbus (Polynomial 0xA001) untuk verifikasi paket.
+    """
+    crc = 0xFFFF
+    for byte in data_bytes:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x0001:
+                crc >>= 1
+                crc ^= 0xA001
+            else:
+                crc >>= 1
+    # Mengembalikan dalam byte-order big-endian (High-byte, Low-byte)
+    return crc.to_bytes(2, byteorder='big')
+
+def send_start_command(ser):
+    """
+    Mengirimkan instruksi Start Measurement (ID: 0x21) ke perangkat.
+    Pembentukan paket:
+    - 0x5A (Start Byte)
+    - 0x06 (Packet Length)
+    - 0x21 (Packet ID: Start Measurement)
+    - 0xF2 (Parameter Type: Complete Machine)
+    - CRC16 (2 bytes)
+    """
+    packet_id = 0x21
+    param_type = PARAM_TYPE_BP
+    packet_length = 0x06
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type])
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"📡 Perintah Start Measurement terkirim! (Paket: {full_packet.hex().upper()})")
+
+def send_stop_command(ser):
+    """
+    Mengirimkan instruksi Stop Measurement (ID: 0x20) ke perangkat.
+    """
+    packet_id = 0x20
+    param_type = PARAM_TYPE_BP
+    packet_length = 0x06
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type])
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n🛑 Perintah Stop Measurement terkirim! (Paket: {full_packet.hex().upper()})")
+
+def send_get_device_id_command(ser):
+    """
+    Mengirimkan instruksi Get Device ID (ID: 0x0F) ke perangkat.
+    """
+    packet_id = PACKET_ID_GET_DEVICE_ID
+    param_type = PARAM_TYPE_BP
+    packet_length = 0x06
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type])
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n🔍 Perintah Get Device ID terkirim! (Paket: {full_packet.hex().upper()})")
+
+def send_set_device_id_command(ser, new_id: str):
+    """
+    Mengirimkan instruksi Set Device ID (ID: 0x0E) ke perangkat.
+    Device ID harus terdiri dari maksimal 12 karakter ASCII.
+    """
+    # Memotong atau mendempul (padding) agar tepat 12 byte
+    new_id_bytes = new_id.encode('ascii', errors='ignore')[:12].ljust(12, b'\x00')
+    
+    packet_id = PACKET_ID_SET_DEVICE_ID
+    param_type = PARAM_TYPE_BP
+    packet_length = len(new_id_bytes) + 6 # Start(1) + Len(1) + ID(1) + Param(1) + Data(12) + CRC(2)
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type]) + new_id_bytes
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n✍️ Perintah Set Device ID '{new_id_bytes.decode('ascii').strip(chr(0))}' terkirim! (Paket: {full_packet.hex().upper()})")
 
 
 # ================= PARSE PAKET =================
@@ -49,6 +140,46 @@ def parse_packet(data_bytes):
             if now - last_realtime_data >= 0.5:
                 last_realtime_data = now
                 return f"Realtime Pressure: {pressure} mmHg"
+
+        # ===== GET DEVICE ID =====
+        elif packet_id == PACKET_ID_GET_DEVICE_ID:
+            in_realtime_mode = False
+            print(f"\n[DEBUG GET ID] {data_bytes.hex().upper()}")
+            device_id_bytes = data_bytes[4:-2]
+            try:
+                device_id_str = device_id_bytes.decode('ascii', errors='replace').strip('\x00')
+            except:
+                device_id_str = "Error Decoding"
+                
+            return (
+                "\n=== GET DEVICE ID ===\n"
+                f"Raw Hex : {device_id_bytes.hex().upper()}\n"
+                f"ASCII   : {device_id_str}\n"
+                "=====================\n"
+            )
+            
+        # ===== SET DEVICE ID (EXECUTION RESULT) =====
+        elif packet_id == PACKET_ID_SET_DEVICE_ID:
+            in_realtime_mode = False
+            print(f"\n[DEBUG SET ID] {data_bytes.hex().upper()}")
+            
+            # Segmen data eksekusi umum (1 byte setelah param_type)
+            exec_status = data_bytes[4] if len(data_bytes) > 6 else 0xFF
+            
+            status_map = {
+                0x00: "✅ Berhasil Disimpan!",
+                0x01: "Memproses Command...",
+                0x02: "Perangkat Sibuk",
+                0x03: "❌ Gagal Menyimpan",
+                0x04: "System Protection",
+            }
+            status_text = status_map.get(exec_status, f"Kode Tak Dikenal: {exec_status}")
+            
+            return (
+                "\n=== HASIL SET DEVICE ID ===\n"
+                f"Status: {status_text}\n"
+                "===========================\n"
+            )
 
         # ===== RESULT =====
         elif packet_id == PACKET_ID_RESULT and length >= 0x14:
@@ -154,6 +285,29 @@ def read_serial_loop(port_name):
             ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
             print(f"✔ Terhubung ke {port_name}")
 
+            # Fitur memicu perintah secara manual
+            while True:
+                user_input = input('\nMenu: [1] Start, [2] Stop, [3] Get ID, [4] Set ID.\nPilih Angka: ')
+                if user_input.strip() == '1':
+                    ser.reset_input_buffer()
+                    send_start_command(ser)
+                    break
+                elif user_input.strip() == '2':
+                    ser.reset_input_buffer()
+                    send_stop_command(ser)
+                    break
+                elif user_input.strip() == '3':
+                    ser.reset_input_buffer()
+                    send_get_device_id_command(ser)
+                    break
+                elif user_input.strip() == '4':
+                    new_id = input("Masukkan ID baru (maks 12 karakter): ")
+                    ser.reset_input_buffer()
+                    send_set_device_id_command(ser, new_id)
+                    break
+                else:
+                    print("⚠️ Input tidak sesuai.")
+
             last_realtime_data = time.time()
 
             while True:
@@ -186,6 +340,11 @@ def read_serial_loop(port_name):
                     if "HASIL PENGUKURAN" in result:
                         print("Menunggu 5 detik sebelum pengukuran berikutnya...\n")
                         time.sleep(5)
+                        break
+                        
+                    # Jika itu seputar urusan Device ID → tunggu sebentar lalu langsung ke menu awal
+                    if "DEVICE ID" in result:
+                        time.sleep(1)
                         break
 
             ser.close()

@@ -56,6 +56,17 @@ Saat skrip dijalankan, ia mencetak pesan *header* ke konsol. Di tahap ini, fungs
 
 ---
 
+Metode perhitungan CRC yang digunakan pada seluruh perangkat dari sistem BPM ini benar-benar seragam (universal menggunakan Modbus CRC-16 dengan Polynomial 0xA001). Aturan CRC tidak berubah sedikitpun terlepas dari jenis ID perintahnya.
+
+Mari kita bongkar paket realtime 5A0828F200306745 sesuai dokumentasi tersebut:
+
+5A ➔ Start Byte (Bendera awal)
+08 ➔ Packet Length (Panjang paket total adalah 8 byte)
+28 ➔ Packet ID untuk Upload real-time cuff pressure
+F2 ➔ Parameter Modul Utama (Mesin Lengkap)
+00 30 ➔ Payload Data (Tekanan 48 mmHg dalam hexadecimal 0x0030)
+67 45 ➔ Ekstensi CRC-16 (Dihitung dari 5A hingga 30 menggunakan rumus Little Endian).
+
 ## Kesimpulan Alur (Flowchart Singkat)
 1. **Scan & Select**: Sistem melacak USB yang memuat nama pabrikan khusus (Silicon Laboratories) dan meminta pengguna memilih perangkat (BPMPRO 2).
 2. **Wait/Standby**: Buka `COM Port` yang dipilih, lalu baca satu-persatu byte hingga menemukan header `0x5A`.
