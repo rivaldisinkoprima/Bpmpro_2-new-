@@ -39,6 +39,9 @@ def parse_packet(data_bytes):
         # ===== REALTIME =====
         if packet_id == PACKET_ID_REALTIME and length >= 0x08:
             in_realtime_mode = True
+            
+            # Debug Hex
+            print(f"[DEBUG REALTIME] {data_bytes.hex().upper()}")
 
             pressure = int.from_bytes(data_bytes[4:6], 'big')
 
@@ -50,6 +53,9 @@ def parse_packet(data_bytes):
         # ===== RESULT =====
         elif packet_id == PACKET_ID_RESULT and length >= 0x14:
             in_realtime_mode = False
+            
+            # Debug Hex
+            print(f"\n[DEBUG RESULT] {data_bytes.hex().upper()}")
 
             systolic = int.from_bytes(data_bytes[4:6], 'big')
             diastolic = int.from_bytes(data_bytes[6:8], 'big')
