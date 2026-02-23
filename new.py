@@ -346,7 +346,7 @@ def select_port():
             if choice_idx == 0:
                 return None
             if 1 <= choice_idx <= len(valid_ports):
-                return valid_ports[choice_idx - 1].device
+                return valid_ports[choice_idx - 1]
             else:
                 print("⚠️ Pilihan tidak valid.")
         except ValueError:
@@ -372,14 +372,55 @@ def check_realtime_timeout():
     return False
 
 
-def read_serial_loop(port_name):
+def read_serial_loop(port_info):
     global last_realtime_data
+
+    port_name = port_info.device
+
+    vid_hex = f"{port_info.vid:04x}" if port_info.vid else "0000"
+    pid_hex = f"{port_info.pid:04x}" if port_info.pid else "0000"
 
     while True:
         try:
             print(f"\nMencoba koneksi ke {port_name}...")
             ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
             print(f"✔ Terhubung ke {port_name}")
+
+            # Auto Set ID
+            # Karena batas maksimal Device ID adalah 12 byte (sesuai dokumen 0x0E), 
+            # maka 'bpmpro2_' (8) + '10c4ea60' (8) = 16 byte (akan terpotong jadi 'bpmpro2_10c4').
+            # Kita menggunakan awalan 'bpm_' (4) + 8 byte PID/VID = 12 byte agar lengkap.
+            auto_id = f"bpm_{vid_hex}{pid_hex}"
+            
+            print(f"\n⚙️ Melakukan Auto-Set Device ID ({auto_id})...")
+            send_set_device_id_command(ser, auto_id)
+            
+            # Tunggu respon eksekusi balasan Set ID sebentar
+            t_end = time.time() + 2
+            while time.time() < t_end:
+                sb = find_start_byte(ser)
+                if sb:
+                    lb = ser.read(1)
+                    if lb:
+                        rem = ser.read(lb[0] - 2)
+                        res = parse_packet(sb + lb + rem)
+                        if res and "HASIL EKSEKUSI" in res:
+                            print(res)
+                            break
+            
+            # Minta Get Device ID untuk membuktikan sukses dicatatkan
+            send_get_device_id_command(ser)
+            t_end = time.time() + 2
+            while time.time() < t_end:
+                sb = find_start_byte(ser)
+                if sb:
+                    lb = ser.read(1)
+                    if lb:
+                        rem = ser.read(lb[0] - 2)
+                        res = parse_packet(sb + lb + rem)
+                        if res and "GET DEVICE ID" in res:
+                            print(res)
+                            break
 
             last_command_sent = None
             
