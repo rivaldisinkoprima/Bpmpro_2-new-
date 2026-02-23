@@ -18,6 +18,7 @@ PACKET_ID_START_CALIBRATION = 0x35
 PACKET_ID_SET_CALIBRATION_PRESSURE = 0x36
 PACKET_ID_CANCEL_CALIBRATION = 0x37
 PACKET_ID_TOGGLE_BUTTON = 0x26
+PACKET_ID_SET_LANGUAGE = 0x66
 PACKET_ID_ERROR = 0x25
 
 REALTIME_TIMEOUT = 5
@@ -182,6 +183,25 @@ def send_toggle_button_command(ser, unlock: bool):
     status_str = "DIBUKA" if unlock else "DIBLOKIR"
     print(f"\n⚙️ Perintah Tombol Fisik -> {status_str} terkirim! (Paket: {full_packet.hex().upper()})")
 
+def send_set_language_command(ser, lang_code: int):
+    """
+    Mengatur bahasa perangkat / alat ukur (ID: 0x66).
+    lang_code = 0x00 (Mandarin), 0x01 (English), 0x02 (Thailand)
+    """
+    packet_id = PACKET_ID_SET_LANGUAGE
+    param_type = PARAM_TYPE_BP
+    packet_length = 0x07 # Start(1) + Len(1) + ID(1) + Param(1) + Data(1) + CRC(2)
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type, lang_code])
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    
+    lang_map = {0x00: "Mandarin", 0x01: "Bahasa Inggris", 0x02: "Thailand"}
+    lang_text = lang_map.get(lang_code, "Tidak Dikenal")
+    print(f"\n⚙️ Perintah Atur Bahasa ({lang_text}) terkirim! (Paket: {full_packet.hex().upper()})")
+
 # ================= PARSE PAKET =================
 
 def parse_packet(data_bytes):
@@ -230,7 +250,7 @@ def parse_packet(data_bytes):
             )
             
         # ===== GENERAL EXECUTION RESULT (Set ID, Kalibrasi, dsb) =====
-        elif packet_id in [PACKET_ID_SET_DEVICE_ID, PACKET_ID_START_CALIBRATION, PACKET_ID_SET_CALIBRATION_PRESSURE, PACKET_ID_CANCEL_CALIBRATION, PACKET_ID_TOGGLE_BUTTON]:
+        elif packet_id in [PACKET_ID_SET_DEVICE_ID, PACKET_ID_START_CALIBRATION, PACKET_ID_SET_CALIBRATION_PRESSURE, PACKET_ID_CANCEL_CALIBRATION, PACKET_ID_TOGGLE_BUTTON, PACKET_ID_SET_LANGUAGE]:
             in_realtime_mode = False
             print(f"\n[DEBUG EXEC ID: {hex(packet_id).upper()}] {data_bytes.hex().upper()}")
             
@@ -446,7 +466,7 @@ def read_serial_loop(port_info):
             
             # Fitur memicu perintah secara manual
             while True:
-                user_input = input('\nMenu:\n[1] Start, [2] Stop, [3] Get ID, [4] Set ID.\n[5] Start Kalibrasi, [6] Set Tkn Aktual, [7] Cancel Kalibrasi.\n[8] Kunci Tombol Fisik Alat.\nPilih Angka: ')
+                user_input = input('\nMenu:\n[1] Start, [2] Stop, [3] Get ID, [4] Set ID.\n[5] Start Kalibrasi, [6] Set Tkn Aktual, [7] Cancel Kalibrasi.\n[8] Kunci Tombol Fisik Alat, [9] Pengaturan Bahasa.\nPilih Angka: ')
                 if user_input.strip() == '1':
                     ser.reset_input_buffer()
                     send_start_command(ser)
@@ -502,6 +522,15 @@ def read_serial_loop(port_info):
                     else:
                         print("⚠️ Pilihan tidak valid.")
                     last_command_sent = 0x26
+                    break
+                elif user_input.strip() == '9':
+                    choice = input("Pilih Bahasa Modul -> [0]: Mandarin, [1]: Inggris, [2]: Thailand: ")
+                    if choice.strip() in ['0', '1', '2']:
+                        ser.reset_input_buffer()
+                        send_set_language_command(ser, int(choice.strip()))
+                        last_command_sent = 0x66
+                    else:
+                        print("⚠️ Pilihan tidak valid.")
                     break
                 else:
                     print("⚠️ Input tidak sesuai.")
