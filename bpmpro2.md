@@ -15,6 +15,7 @@ Bagian ini mengatur spesifikasi koneksi dan identifikasi paket data perangkat:
 - **PACKET_ID_RESULT (0x22)**: Penanda bahwa paket berisi hasil akhir pengukuran yang sudah selesai.
 - **PACKET_ID_GET_DEVICE_ID (0x0F)** & **SET_DEVICE_ID (0x0E)**: Paket operasional untuk urusan serial number modul.
 - **PACKET_ID KALIBRASI (0x35, 0x36, 0x37)**: Paket operasional instruksi khusus *Calibration Mode* (Mulai, Set Tkn Aktual, Batal).
+- **PACKET_ID_TOGGLE_BUTTON (0x26)**: Paket kontrol untuk menutup atau membuka fungsi tombol perangkat fisik (disable/enable start button).
 - **PACKET_ID_ERROR (0x25)**: Paket notifikasi yang dikirimkan perangkat jika terjadi malfungsi pengukuran.
 - **REALTIME_TIMEOUT (5 detik)**: Batas waktu maksimal jika data *realtime* tidak terkirim secara tiba-tiba, maka pembacaan akan diulang (Emergency Stop).
 
@@ -62,6 +63,7 @@ Ini adalah fungsi utama (loop tak terbatas) yang terus berjalan untuk memantau k
    - `[3]` untuk meminta info *Get Device ID*
    - `[4]` untuk mengatur *Set Device ID*
    - `[5]` - `[7]` adalah instruksi mode Kalibrasi Tekanan Air Raksa.
+   - `[8]` untuk menutup (disable) atau membuka (enable) fungsi menekan tombol *start* fisik pada badan modul pengukur.
    Setelah opsi dipilih, port mengeksekusi tulis dan program lanjut membuka gerbang *Listener*.
 4. **Timeout Check (`check_realtime_timeout`)**: Saat sedang membaca data *realtime*, jika terhenti >5 detik, sistem melakukan **Emergency Stop**.
 5. **Menyusun Packet Byte**: 
