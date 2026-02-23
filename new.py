@@ -14,6 +14,11 @@ PACKET_ID_RESULT = 0x22
 PACKET_ID_GET_DEVICE_ID = 0x0F
 PACKET_ID_SET_DEVICE_ID = 0x0E
 
+PACKET_ID_START_CALIBRATION = 0x35
+PACKET_ID_SET_CALIBRATION_PRESSURE = 0x36
+PACKET_ID_CANCEL_CALIBRATION = 0x37
+PACKET_ID_ERROR = 0x25
+
 REALTIME_TIMEOUT = 5
 
 # ================= VARIABEL GLOBAL =================
@@ -110,6 +115,52 @@ def send_set_device_id_command(ser, new_id: str):
     ser.write(full_packet)
     print(f"\n✍️ Perintah Set Device ID '{new_id_bytes.decode('ascii').strip(chr(0))}' terkirim! (Paket: {full_packet.hex().upper()})")
 
+def send_start_calibration_command(ser, prefill_pressure: int):
+    """
+    Memulai kalibrasi tekanan dengan mengirim parameter pre-fill pressure (2 bytes).
+    """
+    pressure_bytes = prefill_pressure.to_bytes(2, byteorder='big')
+    packet_id = PACKET_ID_START_CALIBRATION
+    param_type = PARAM_TYPE_BP
+    packet_length = len(pressure_bytes) + 6
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type]) + pressure_bytes
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n⚙️ Perintah Start Kalibrasi ({prefill_pressure} mmHg) terkirim! (Paket: {full_packet.hex().upper()})")
+
+def send_set_calibration_pressure_command(ser, actual_pressure: int):
+    """
+    Mengatur tekanan nyata (Aktual) untuk kalibrasi (2 bytes).
+    """
+    pressure_bytes = actual_pressure.to_bytes(2, byteorder='big')
+    packet_id = PACKET_ID_SET_CALIBRATION_PRESSURE
+    param_type = PARAM_TYPE_BP
+    packet_length = len(pressure_bytes) + 6
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type]) + pressure_bytes
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n⚙️ Perintah Set Tekanan Aktual Kalibrasi ({actual_pressure} mmHg) terkirim! (Paket: {full_packet.hex().upper()})")
+
+def send_cancel_calibration_command(ser):
+    """
+    Membatalkan mode kalibrasi tekanan secara manual.
+    """
+    packet_id = PACKET_ID_CANCEL_CALIBRATION
+    param_type = PARAM_TYPE_BP
+    packet_length = 0x06
+    
+    payload = bytes([START_BYTE, packet_length, packet_id, param_type])
+    crc = calc_crc(payload)
+    
+    full_packet = payload + crc
+    ser.write(full_packet)
+    print(f"\n🚫 Perintah Cancel Kalibrasi terkirim! (Paket: {full_packet.hex().upper()})")
 
 # ================= PARSE PAKET =================
 
@@ -158,27 +209,51 @@ def parse_packet(data_bytes):
                 "=====================\n"
             )
             
-        # ===== SET DEVICE ID (EXECUTION RESULT) =====
-        elif packet_id == PACKET_ID_SET_DEVICE_ID:
+        # ===== GENERAL EXECUTION RESULT (Set ID, Kalibrasi, dsb) =====
+        elif packet_id in [PACKET_ID_SET_DEVICE_ID, PACKET_ID_START_CALIBRATION, PACKET_ID_SET_CALIBRATION_PRESSURE, PACKET_ID_CANCEL_CALIBRATION]:
             in_realtime_mode = False
-            print(f"\n[DEBUG SET ID] {data_bytes.hex().upper()}")
+            print(f"\n[DEBUG EXEC ID: {hex(packet_id).upper()}] {data_bytes.hex().upper()}")
             
             # Segmen data eksekusi umum (1 byte setelah param_type)
             exec_status = data_bytes[4] if len(data_bytes) > 6 else 0xFF
             
             status_map = {
-                0x00: "✅ Berhasil Disimpan!",
+                0x00: "✅ Operasi Berhasil Diselesaikan!",
                 0x01: "Memproses Command...",
                 0x02: "Perangkat Sibuk",
-                0x03: "❌ Gagal Menyimpan",
-                0x04: "System Protection",
+                0x03: "❌ Operasi Gagal",
+                0x04: "System Protection Aktif",
             }
             status_text = status_map.get(exec_status, f"Kode Tak Dikenal: {exec_status}")
             
             return (
-                "\n=== HASIL SET DEVICE ID ===\n"
+                f"\n=== HASIL EKSEKUSI (ID {hex(packet_id).upper()}) ===\n"
                 f"Status: {status_text}\n"
-                "===========================\n"
+                "==================================\n"
+            )
+
+        # ===== ERROR CODE =====
+        elif packet_id == PACKET_ID_ERROR:
+            in_realtime_mode = False
+            print(f"\n[DEBUG ERROR] {data_bytes.hex().upper()}")
+            error_code = data_bytes[4] if len(data_bytes) > 6 else 0xFF
+            
+            error_map = {
+                0x00: "Hasil normal",
+                0x01: "Manset terlalu longgar atau tidak terhubung",
+                0x02: "Kebocoran pada sirkuit udara atau katup",
+                0x03: "Kesalahan tekanan udara / katup tidak terbuka",
+                0x04: "Sinyal nampak lemah (manset terlalu longgar)",
+                0x0A: "Dihentikan secara manual",
+                0x0B: "Kesalahan Sistem",
+                0x25: "Batas waktu pengukuran habis (>180 detik)",
+            }
+            err_text = error_map.get(error_code, f"Kode Kesalahan Tak Dikenal: {hex(error_code)}")
+            
+            return (
+                "\n=== PENGUKURAN GAGAL (ERROR) ===\n"
+                f"Penyebab: {err_text}\n"
+                "================================\n"
             )
 
         # ===== RESULT =====
@@ -285,30 +360,60 @@ def read_serial_loop(port_name):
             ser = serial.Serial(port_name, BAUD_RATE, timeout=1)
             print(f"✔ Terhubung ke {port_name}")
 
+            last_command_sent = None
+            
             # Fitur memicu perintah secara manual
             while True:
-                user_input = input('\nMenu: [1] Start, [2] Stop, [3] Get ID, [4] Set ID.\nPilih Angka: ')
+                user_input = input('\nMenu:\n[1] Start, [2] Stop, [3] Get ID, [4] Set ID.\n[5] Start Kalibrasi, [6] Set Tkn Aktual, [7] Cancel Kalibrasi.\nPilih Angka: ')
                 if user_input.strip() == '1':
                     ser.reset_input_buffer()
                     send_start_command(ser)
+                    last_command_sent = 0x21
                     break
                 elif user_input.strip() == '2':
                     ser.reset_input_buffer()
                     send_stop_command(ser)
+                    last_command_sent = 0x20
                     break
                 elif user_input.strip() == '3':
                     ser.reset_input_buffer()
                     send_get_device_id_command(ser)
+                    last_command_sent = 0x0F
                     break
                 elif user_input.strip() == '4':
                     new_id = input("Masukkan ID baru (maks 12 karakter): ")
                     ser.reset_input_buffer()
                     send_set_device_id_command(ser, new_id)
+                    last_command_sent = 0x0E
+                    break
+                elif user_input.strip() == '5':
+                    try:
+                        prefill = int(input("Masukkan target tekanan pre-fill untuk kalibrasi (mmHg): "))
+                        ser.reset_input_buffer()
+                        send_start_calibration_command(ser, prefill)
+                        last_command_sent = 0x35
+                    except ValueError:
+                        print("⚠️ Harap masukkan angka yang valid.")
+                    break
+                elif user_input.strip() == '6':
+                    try:
+                        actual = int(input("Masukkan Set tekanan aktual kalibrasi (mmHg): "))
+                        ser.reset_input_buffer()
+                        send_set_calibration_pressure_command(ser, actual)
+                        last_command_sent = 0x36
+                    except ValueError:
+                        print("⚠️ Harap masukkan angka yang valid.")
+                    break
+                elif user_input.strip() == '7':
+                    ser.reset_input_buffer()
+                    send_cancel_calibration_command(ser)
+                    last_command_sent = 0x37
                     break
                 else:
                     print("⚠️ Input tidak sesuai.")
 
             last_realtime_data = time.time()
+            wait_start_time = time.time()
 
             while True:
 
@@ -318,6 +423,12 @@ def read_serial_loop(port_name):
 
                 start = find_start_byte(ser)
                 if not start:
+                    # Jika perintah bukanlah 'Start Measurement', jangan tunggu alat merespons tanpa henti.
+                    # Putus loop jika 3 detik berlalu dan tidak ada info/data baru.
+                    if last_command_sent != 0x21:
+                        if time.time() - wait_start_time > 3:
+                            print("\n⏳ Selesai mengeksekusi (Timeout balasan). Kembali...\n")
+                            break
                     continue
 
                 length_byte = ser.read(1)
@@ -342,9 +453,11 @@ def read_serial_loop(port_name):
                         time.sleep(5)
                         break
                         
-                    # Jika itu seputar urusan Device ID → tunggu sebentar lalu langsung ke menu awal
-                    if "DEVICE ID" in result:
+                    # Jika itu seputar urusan Device ID, Error, atau Eksekusi Khusus → tunggu sebentar lalu langsung ke menu awal
+                    if any(key in result for key in ["DEVICE ID", "HASIL EKSEKUSI", "ERROR"]):
                         time.sleep(1)
+                        # Reset flag timeout realtime agar tidak memicu reset semu 
+                        in_realtime_mode = False  
                         break
 
             ser.close()
