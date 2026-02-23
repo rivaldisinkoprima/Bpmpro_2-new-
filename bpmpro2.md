@@ -55,18 +55,19 @@ Fungsi `parse_packet(data_bytes)` bertugas membedah paket byte mentah dari port 
 ## 5. Sistem Pembacaan Serial (`read_serial_loop`)
 Ini adalah fungsi utama (loop tak terbatas) yang terus berjalan untuk memantau konektivitas:
 1. **Koneksi Port**: Mancoba menghubungkan dengan *Port* yang dipilih sebelumnya.
-2. **Kendali Antarmuka**: Program meminta pengguna untuk memilih menu eksekusi:
+2. **Auto-Set Device ID**: Segera setelah terhubung, sistem akan mengekstraksi **Vendor ID (VID)** dan **Product ID (PID)** fisik dari USB, menggabungkannya menjadi string berformat `bpm_[VID][PID]` (contoh: `bpm_10c4ea60`), lalu merekamnya ke alat (`0x0E`) dan dipanggil kembali (`0x0F`) sebagai validasi pengenal otomatis sebelum layar Menu Utama muncul.
+3. **Kendali Antarmuka**: Program meminta pengguna untuk memilih menu eksekusi:
    - `[1]` untuk mengirim *Start Measurement*
    - `[2]` untuk mengirim *Stop Measurement*
    - `[3]` untuk meminta info *Get Device ID*
    - `[4]` untuk mengatur *Set Device ID*
    - `[5]` - `[7]` adalah instruksi mode Kalibrasi Tekanan Air Raksa.
    Setelah opsi dipilih, port mengeksekusi tulis dan program lanjut membuka gerbang *Listener*.
-3. **Timeout Check (`check_realtime_timeout`)**: Saat sedang membaca data *realtime*, jika terhenti >5 detik, sistem melakukan **Emergency Stop**.
-4. **Menyusun Packet Byte**: 
+4. **Timeout Check (`check_realtime_timeout`)**: Saat sedang membaca data *realtime*, jika terhenti >5 detik, sistem melakukan **Emergency Stop**.
+5. **Menyusun Packet Byte**: 
    - Fungsi `find_start_byte()` akan membaca byte satu per satu hingga menemukan header `0x5A`.
    - Modul membaca *panjang paket* (`length`) di byte selanjutnya, lalu merangkai sisanya (`full_packet`).
-5. **Eksekusi Penampilan Data**: Paket diserahkan ke fungsi `parse_packet()`. 
+6. **Eksekusi Penampilan Data**: Paket diserahkan ke fungsi `parse_packet()`. 
    - Komputer akan mencetaknya ke terminal. Apabila respons bertajuk **"DEVICE ID"** atau sekadar balasan **"HASIL EKSEKUSI"** *(Command)*, terminal tidak perlu menunggu lama dan langsung memutus *loop* untuk kembali menanyakan opsi Antarmuka. Namun, jika alat mengirimkan **"HASIL PENGUKURAN"** (manset telah kempes), terminal mengambil jeda agak panjang (5 detik) untuk istirahat pasien sebelum kembali ke opsi Antarmuka.
 
 ## 6. Eksekusi Utama (`__main__`)
@@ -86,13 +87,14 @@ Contoh Struktur Payload Realtime (`5A0828F200306745`):
 
 ## Kesimpulan Alur (Flowchart Singkat)
 1. **Scan & Select**: Sistem melacak USB yang memuat nama pabrikan khusus (Silicon Laboratories) dan meminta pengguna memilih perangkat (BPMPRO 2).
-2. **Action Prompt**: Terminal menyajikan antarmuka *Input Menu* [1-7] untuk mengatur atau memulai interaksi dengan mesin pengukur. Komputer mentransmisikan bit-bit yang ditentukan.
-3. **Wait/Standby**: Buka *Listening stream* COM Port, lalu baca satu-persatu respon alat memburu header kompas `0x5A`.
-4. **Collect**: Baca seluruh panjang paket tersebut, pastikan integritasnya (opsional), buang ke *parser*.
-5. **Analyze**: 
+2. **Initialization (Auto-Set)**: Komputer merangkai String 12-byte dari VID dan PID asli (format `bpm_10c4ea60`), lalu mengirimnya secara paksa ke dalam modul (`0x0E`) dan membacanya kembali (`0x0F`).
+3. **Action Prompt**: Terminal menyajikan antarmuka *Input Menu* [1-7] untuk mengatur atau memulai interaksi dengan mesin pengukur. Komputer mentransmisikan bit-bit yang ditentukan.
+4. **Wait/Standby**: Buka *Listening stream* COM Port, lalu baca satu-persatu respon alat memburu header kompas `0x5A`.
+5. **Collect**: Baca seluruh panjang paket tersebut, pastikan integritasnya (opsional), buang ke *parser*.
+6. **Analyze**: 
    - Jika data terdeteksi `0x28` -> Print log ketegangan pompa *realtime*.
    - Jika data terdeteksi status error macet/kendor `0x25` -> Print Penyebab Error Spesifik -> Segera break ke layar Menu Utama. 
    - Jika data masuk jenis info/pengaturan/kalibrasi -> Tampilkan Status Eksekusi -> Kembali cepat ke Mode Menu Utama.
    - Jika terjadi masalah (Berhenti baca >5 Detik) -> Emergency Stop & Reset.
    - Jika data terdeteksi log sukses `0x22` -> Print Hasil Total (Sistolik, Diastolik, Heart Rate), lalu tunggu 5 detik istirahat lengan.
-6. **Repeat**: Tutup sesi dan kembali ke tahapan nomor 2 untuk pasien / pengujian berikutnya.
+7. **Repeat**: Tutup sesi dan kembali ke tahapan nomor 3 untuk pasien / pengujian berikutnya.
