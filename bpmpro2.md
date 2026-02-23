@@ -15,6 +15,7 @@ Bagian ini mengatur spesifikasi koneksi dan identifikasi paket data perangkat:
 - **PACKET_ID_RESULT (0x22)**: Penanda bahwa paket berisi hasil akhir pengukuran yang sudah selesai.
 - **PACKET_ID_GET_DEVICE_ID (0x0F)** & **SET_DEVICE_ID (0x0E)**: Paket operasional untuk urusan serial number modul.
 - **PACKET_ID KALIBRASI (0x35, 0x36, 0x37)**: Paket operasional instruksi khusus *Calibration Mode* (Mulai, Set Tkn Aktual, Batal).
+- **PACKET_ID_ERROR (0x25)**: Paket notifikasi yang dikirimkan perangkat jika terjadi malfungsi pengukuran.
 - **REALTIME_TIMEOUT (5 detik)**: Batas waktu maksimal jika data *realtime* tidak terkirim secara tiba-tiba, maka pembacaan akan diulang (Emergency Stop).
 
 ## 2. Deteksi Port Otomatis (`select_port`)
@@ -47,6 +48,9 @@ Fungsi `parse_packet(data_bytes)` bertugas membedah paket byte mentah dari port 
      - Detak Jantung / *Heart Rate* (bpm)
      - Timestamp / Waktu Pengukuran (Tahun, Bulan, Hari, Jam, Menit).
    - Mengembalikan hasil ekstraksi tersebut dalam bentuk teks *(string)* terformat dengan rapi.
+4. **Respon Error (ID `0x25`)**:
+   - Papan mikroskopik mendeteksi masalah dan menyodorkan 1 byte *error code*.
+   - Menerjemahkan *byte* yang masuk (misalnya `0x00` = sukses, `0x0A` = Batal Manual, `0x11` = Selang Buntu, dsb.) ke status diagnostik teks. Lengan kempes dan memutus koneksi seketika.
 
 ## 5. Sistem Pembacaan Serial (`read_serial_loop`)
 Ini adalah fungsi utama (loop tak terbatas) yang terus berjalan untuk memantau konektivitas:
@@ -87,7 +91,8 @@ Contoh Struktur Payload Realtime (`5A0828F200306745`):
 4. **Collect**: Baca seluruh panjang paket tersebut, pastikan integritasnya (opsional), buang ke *parser*.
 5. **Analyze**: 
    - Jika data terdeteksi `0x28` -> Print log ketegangan pompa *realtime*.
+   - Jika data terdeteksi status error macet/kendor `0x25` -> Print Penyebab Error Spesifik -> Segera break ke layar Menu Utama. 
    - Jika data masuk jenis info/pengaturan/kalibrasi -> Tampilkan Status Eksekusi -> Kembali cepat ke Mode Menu Utama.
    - Jika terjadi masalah (Berhenti baca >5 Detik) -> Emergency Stop & Reset.
-   - Jika data terdeteksi `0x22` -> Print Hasil Total (Sistolik, Diastolik, Heart Rate), lalu tunggu 5 detik.
+   - Jika data terdeteksi log sukses `0x22` -> Print Hasil Total (Sistolik, Diastolik, Heart Rate), lalu tunggu 5 detik istirahat lengan.
 6. **Repeat**: Tutup sesi dan kembali ke tahapan nomor 2 untuk pasien / pengujian berikutnya.
